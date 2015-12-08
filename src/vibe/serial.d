@@ -77,7 +77,7 @@ enum FlowControl
 class SerialConnection : Stream
 {
 private:
-    FileDescriptorEvent _event;
+    FileDescriptorEvent _readEvent, _writeEvent;
     int _fd = -1;
 
     ubyte[2048] _buffer;
@@ -137,7 +137,8 @@ private:
     {
         // FIXME: Write support
         _fd = fd;
-        _event = createFileDescriptorEvent(_fd, FileDescriptorEvent.Trigger.read);
+        _readEvent = createFileDescriptorEvent(_fd, FileDescriptorEvent.Trigger.read);
+        _writeEvent = createFileDescriptorEvent(_fd, FileDescriptorEvent.Trigger.write);
     }
 
 public:
@@ -160,7 +161,7 @@ public:
             while (nread == 0 && !_eof)
             {
                 // FIXME: timeout support
-                _event.wait(FileDescriptorEvent.Trigger.read);
+                _readEvent.wait(FileDescriptorEvent.Trigger.read);
                 nread = readInto(_buffer[]);
             }
             _bufAvailable = _buffer[0 .. nread];
@@ -193,7 +194,7 @@ public:
             while (nread < dst.length && !_eof)
             {
                 // FIXME: timeout support
-                _event.wait(FileDescriptorEvent.Trigger.read);
+                _readEvent.wait(FileDescriptorEvent.Trigger.read);
                 nread += readInto(dst[nread .. $]);
             }
 
@@ -206,7 +207,7 @@ public:
         const(ubyte)[] mBytes = bytes;
         while (mBytes.length != 0)
         {
-            _event.wait(FileDescriptorEvent.Trigger.write);
+            _writeEvent.wait(FileDescriptorEvent.Trigger.write);
             size_t written = writeFrom(mBytes[]);
             mBytes = mBytes[written .. $];
         }
