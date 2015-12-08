@@ -71,6 +71,38 @@ enum FlowControl
 }
 
 /**
+ * Failed to set a parameter of the serial port.
+ */
+class ParameterException : Exception
+{
+private:
+    @safe pure nothrow this(ParameterException.Type type, string file =__FILE__, size_t line = __LINE__, Throwable next = null)
+    {
+        parameter = type;
+        super("Couldn't set a serial port parameter: " ~ type.stringof, file, line, next);
+    }
+
+public:
+    /**
+     * Possible parameters to configure serial port.
+     */
+    enum Type
+    {
+        internal,
+        baudRate,
+        parity,
+        stopBits,
+        dataBits,
+        flowControl
+    }
+
+    /**
+     * Which parameter couldn't be set
+     */
+    Type parameter;
+}
+
+/**
  * TODO: Should this automatically close the fd
  * on flush, write, read Exceptions?
  */
@@ -83,6 +115,66 @@ private:
     ubyte[2048] _buffer;
     ubyte[] _bufAvailable;
     bool _eof = false;
+
+    /// Get serial port options
+    termios getOptions() const
+    {
+        termios options;
+        errnoEnforce(tcgetattr(_fd, &options) != -1, "Couldn't get terminal options");
+        return options;
+    }
+    
+    /**
+     * Set serial port options.
+     *
+     * Returns: True if set sucessfully, false if invalid input value
+     * Throws: ErrnoException (except for invalid input value)
+     */
+    bool setOptions(termios options)
+    {
+        auto result = tcsetattr(_fd, TCSADRAIN, &options);
+        if (result == -1)
+            return true;
+        else if (errno == EINVAL)
+            return false;
+        else
+            errnoEnforce(false, "Couldn't set terminal options");
+
+        // Can't happen
+        assert(0);
+    }
+
+    bool setVerifyOptions(termios value)
+    {
+        if(setOptions(value))
+        {
+            auto newOptions = getOptions();
+            return newOptions == value;
+        }
+        else
+            return false;
+    }
+
+    void setBaseParams()
+    {
+        auto options = getOptions();
+        // Start receiver
+        options.c_cflag |= CLOCAL | CREAD;
+        options.c_cflag &= ~(HUPCL);
+        
+        // Raw input
+        options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG | ECHOK | ECHONL | IEXTEN);
+        
+        // No postprocessing
+        options.c_oflag &= ~OPOST;
+        
+        // Ignore break condition
+        options.c_iflag &= ~(IXON | IXOFF | IXANY | BRKINT);
+        options.c_iflag |= IGNBRK;
+
+        if(!setVerifyOptions(options))
+            throw new ParameterException(ParameterException.Type.internal);
+    }
 
     /**
      * Read into buffer. Return number of bytes read.
@@ -148,7 +240,209 @@ private:
     }
 
 public:
-    @property bool dataAvailableForRead()
+    /**
+     * 
+     */
+    BaudRate baudrate() @property const
+    {
+        auto options = getOptions();
+        auto speed = cfgetispeed(&options);
+        enforce(speed == cfgetospeed(&options), "Unknown speed value");
+
+        return getFromPosixSpeed(speed);
+    }
+
+    /**
+     * 
+     * Throws: ParameterException if the baudrate could not be set
+     */
+    void baudrate(BaudRate value) @property
+    {
+        auto options = getOptions();
+
+        auto speed = value.getPosixSpeed();
+        cfsetispeed(&options, speed);
+        cfsetospeed(&options, speed);
+
+        BaudRate newValue;
+        if(!setOptions(options) || collectException(this.baudrate, newValue) !is null || newValue != value)
+            throw new ParameterException(ParameterException.Type.baudRate);
+    }
+
+    /**
+     * 
+     */
+    Parity parity() @property const
+    {
+        auto options = getOptions();
+        if (options.c_cflag & PARENB)
+        {
+            if (options.c_cflag & PARODD)
+                return Parity.odd;
+            else
+                return Parity.even;
+        }
+        else
+            return Parity.none;
+    }
+    
+    /**
+     * 
+     * Throws: ParameterException if the parity could not be set
+     */
+    void parity(Parity value) @property
+    {
+        auto options = getOptions();
+        
+        final switch(value)
+        {
+            case Parity.none:
+                options.c_cflag &= ~PARENB;
+                break;
+            case Parity.even:
+                options.c_cflag |= PARENB;
+                options.c_cflag &= ~PARODD;
+                break;
+            case Parity.odd:
+                options.c_cflag |= PARENB;
+                options.c_cflag |= PARODD;
+                break;
+        }
+
+        Parity newValue;
+        if(!setOptions(options) || collectException(this.parity, newValue) !is null || newValue != value)
+            throw new ParameterException(ParameterException.Type.parity);
+    }
+
+    /**
+     * 
+     */
+    StopBits stopBits() @property const
+    {
+        auto options = getOptions();
+
+        if (options.c_cflag & CSTOPB)
+            return StopBits.two;
+        else
+            return StopBits.one;
+    }
+    
+    /**
+     * 
+     * Throws: ParameterException if the number of stop bits could not be set
+     */
+    void stopBits(StopBits value) @property
+    {
+        auto options = getOptions();
+        
+        final switch(value)
+        {
+            case StopBits.one:
+                options.c_cflag &= ~CSTOPB;
+                break;
+            case StopBits.two:
+                options.c_cflag |= CSTOPB;
+                break;
+        }
+
+        StopBits newValue;
+        if(!setOptions(options) || collectException(this.stopBits, newValue) !is null || newValue != value)
+            throw new ParameterException(ParameterException.Type.stopBits);
+    }
+
+    /**
+     * 
+     */
+    DataBits dataBits() @property const
+    {
+        auto options = getOptions();
+
+        // Get all size bits
+        auto masked = options.c_cflag & CSIZE;
+        // Remove all size bits we know of
+        masked &= ~(CS5 | CS6 | CS7 | CS8);
+        // If there are still set bits, this is a size we don't know of (CS9, CS4, ...)
+        // (obviously, the druntime CSIZE definition needs to be correct for this to work)
+        enforce(masked == 0, "Unsupported number of DataBits!");
+
+        // Now check all known values
+        if (options.c_cflag & CS5)
+            return DataBits.five;
+        else if (options.c_cflag & CS6)
+            return DataBits.six;
+        else if (options.c_cflag & CS7)
+            return DataBits.seven;
+        else if (options.c_cflag & CS8)
+            return DataBits.eight;
+        else
+            throw new Exception("Unsupported number of DataBits!");
+    }
+    
+    /**
+     * 
+     * Throws: ParameterException if the number of data bits could not be set
+     */
+    void dataBits(DataBits value) @property
+    {
+        auto options = getOptions();
+        
+        options.c_cflag &= ~(CSIZE);
+        final switch(value)
+        {
+            case DataBits.five:
+                options.c_cflag |= CS5;
+                break;
+            case DataBits.six:
+                options.c_cflag |= CS6;
+                break;
+            case DataBits.seven:
+                options.c_cflag |= CS7;
+                break;
+            case DataBits.eight:
+                options.c_cflag |= CS8;
+                break;
+        }
+
+        DataBits newValue;
+        if(!setOptions(options) || collectException(this.dataBits, newValue) !is null || newValue != value)
+            throw new ParameterException(ParameterException.Type.dataBits);
+    }
+
+    /**
+     * TODO: hardware flow control
+     */
+    FlowControl flowControl() @property const
+    {
+        auto options = getOptions();
+
+        if((options.c_iflag & IXON) && (options.c_iflag & IXOFF))
+            return FlowControl.software;
+        else if(!(options.c_iflag & IXON) && !(options.c_iflag & IXOFF))
+            return FlowControl.none;
+        else
+            throw new Exception("Unsupported flow control method!");
+    }
+    
+    /**
+     * 
+     * Throws: ParameterException if the flow control type could not be set
+     */
+    void flowControl(FlowControl value) @property
+    {
+        auto options = getOptions();
+
+        // We do not want to have any character start flowing
+        options.c_iflag &= ~(IXANY);
+        if(value == FlowControl.none)
+            options.c_iflag &= ~(IXON | IXOFF);
+        else if(value == FlowControl.software)
+            options.c_iflag |= (IXON | IXOFF);
+
+        FlowControl newValue;
+        if(!setOptions(options) || collectException(this.flowControl, newValue) !is null || newValue != value)
+            throw new ParameterException(ParameterException.Type.flowControl);
+    }
+
     /**
      * Standard vibe.d ConnectionStream interface
      */
@@ -292,90 +586,15 @@ SerialConnection connectSerial(string file, BaudRate rate, Parity parity = Parit
         close(fd);
     }
 
+    auto conn = new SerialConnection(fd);
+    conn.setBaseParams();
+    conn.baudrate = rate;
+    conn.parity = parity;
+    conn.stopBits = stopBits;
+    conn.dataBits = dataBits;
+    conn.flowControl = flow;
 
-    // Set serial options
-    termios options;
-    errnoEnforce(tcgetattr(fd, &options) != -1, "Couldn't get terminal options");
-    options.c_cflag |= CLOCAL | CREAD;
-    options.c_cflag &= ~(HUPCL);
-
-    // Baudrate
-    cfsetispeed(&options, rate.getPosixSpeed());
-    cfsetospeed(&options, rate.getPosixSpeed());
-
-    // Parity
-    final switch(parity)
-    {
-        case Parity.none:
-            options.c_cflag &= ~PARENB;
-            break;
-        case Parity.even:
-            options.c_cflag |= PARENB;
-            options.c_cflag &= ~PARODD;
-            break;
-        case Parity.odd:
-            options.c_cflag |= PARENB;
-            options.c_cflag |= PARODD;
-            break;
-    }
-
-    // Set number of stop bits
-    final switch(stopBits)
-    {
-        case StopBits.one:
-            options.c_cflag &= ~CSTOPB;
-            break;
-        case StopBits.two:
-            options.c_cflag |= CSTOPB;
-            break;
-    }
-
-    // Set number of data bits
-    options.c_cflag &= ~(CSIZE);
-    final switch(dataBits)
-    {
-        case DataBits.five:
-            options.c_cflag |= CS5;
-            break;
-        case DataBits.six:
-            options.c_cflag |= CS6;
-            break;
-        case DataBits.seven:
-            options.c_cflag |= CS7;
-            break;
-        case DataBits.eight:
-            options.c_cflag |= CS8;
-            break;
-    }
-
-    // Flow control
-    // Only allow explicit start flow
-    options.c_iflag &= ~(IXANY);
-    if(flow == FlowControl.none)
-        options.c_iflag &= ~(IXON | IXOFF);
-    else if(flow == FlowControl.software)
-        options.c_iflag |= (IXON | IXOFF);
-
-
-    // Raw input
-    options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG | ECHOK | ECHONL | IEXTEN);
-    // No postprocessing
-    options.c_oflag &= ~OPOST;
-
-    // ignore break condition
-    options.c_iflag &= ~(IXON | IXOFF | IXANY | BRKINT);
-    options.c_iflag |= IGNBRK;
-
-    // Now apply the serial port settings
-    errnoEnforce(tcsetattr(fd, TCSANOW, &options) != -1, "Couldn't set terminal options");
-
-    // Verify options
-    termios options2;
-    errnoEnforce(tcgetattr(fd, &options2) != -1, "Couldn't verify terminal options");
-    //FIXME: Maybe check only baudrate, stopbits, ... manually?
-    errnoEnforce(options == options2, "Couldn't set all terminal options");
-
-    return new SerialConnection(fd);
+    return conn;
 }
 
 private speed_t getPosixSpeed(BaudRate rate)
@@ -419,4 +638,46 @@ private speed_t getPosixSpeed(BaudRate rate)
         case BaudRate.B115200:
             throw new Exception("BaudRate B115200 not supported in druntime");
     }
+}
+
+private BaudRate getFromPosixSpeed(speed_t rate)
+{
+    switch(rate)
+    {
+        case B50:
+            return BaudRate.B50;
+        case B75:
+            return BaudRate.B75;
+        case B110:
+            return BaudRate.B110;
+        case B134:
+            return BaudRate.B134;
+        case B150:
+            return BaudRate.B150;
+        case B200:
+            return BaudRate.B200;
+        case B300:
+            return BaudRate.B300;
+        case B600:
+            return BaudRate.B600;
+        case B1200:
+            return BaudRate.B1200;
+        case B1800:
+            return BaudRate.B1800;
+        case B2400:
+            return BaudRate.B2400;
+        case B4800:
+            return BaudRate.B4800;
+        case B9600:
+            return BaudRate.B9600;
+        case B19200:
+            return BaudRate.B19200;
+        case B38400:
+            return BaudRate.B38400;
+        default:
+            throw new Exception("Unknown speed value");
+    }
+
+    // Can't happen
+    assert(0);
 }
