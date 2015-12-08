@@ -1,0 +1,11 @@
+{
+	"name": "vibe-serial",
+	"description": "vibe.d based library to access serial communication ports",
+	"copyright": "Copyright © 2015, Johannes Pfau",
+	"authors": ["Johannes Pfau"],
+	"targetType": "library",
+	"dependencies": {
+		"vibe-d": "~>0.7.26"
+	}
+}
+
