@@ -84,6 +84,9 @@ private:
     ubyte[] _bufAvailable;
     bool _eof = false;
 
+    /**
+     * Read into buffer. Return number of bytes read.
+     */
     size_t readInto(ubyte[] buf)
     {
         assert(buf.length > 0);
@@ -112,6 +115,9 @@ private:
         assert(0);
     }
 
+    /**
+     * Write from buffer. Return bytes written.
+     */
     size_t writeFrom(const(ubyte)[] buf)
     {
         assert(buf.length > 0);
@@ -143,17 +149,23 @@ private:
 
 public:
     @property bool dataAvailableForRead()
+    /**
+     * Standard vibe.d ConnectionStream interface
+     */
+    bool dataAvailableForRead() @property
     {
         return _bufAvailable.length != 0;
     }
 
     //FIXME: Have to read in empty: lastSize may not return 0 if empty returned false before
-    @property bool empty()
+    ///ditto
+    bool empty() @property
     {
         return _eof && _bufAvailable.length == 0;
     }
 
-    @property size_t leastSize()
+    ///ditto
+    size_t leastSize() @property
     {
         if (_bufAvailable.length == 0)
         {
@@ -170,11 +182,13 @@ public:
         return _bufAvailable.length;
     }
 
+    ///ditto
     const(ubyte)[] peek()
     {
         return _bufAvailable;
     }
 
+    ///ditto
     void read(ubyte[] dst)
     {
         if (_bufAvailable.length >= dst.length)
@@ -202,6 +216,7 @@ public:
         }
     }
 
+    ///ditto
     void write(const(ubyte[]) bytes)
     {
         const(ubyte)[] mBytes = bytes;
@@ -213,22 +228,26 @@ public:
         }
     }
 
+    ///ditto
     void write(InputStream stream, size_t nbytes = 0)
     {
         writeDefault(stream, nbytes);
     }
 
+    ///ditto
     void flush()
     {
         errnoEnforce(tcflush(_fd, TCOFLUSH) != -1, "Couldn't flush serial port buffer");
     }
 
+    ///ditto
     void finalize()
     {
         flush();
         close();
     }
 
+    ///ditto
     void close()
     {
         if (_fd != -1)
@@ -238,10 +257,14 @@ public:
             _fd = -1;
         }
     }
+
+    ///ditto
     bool connected() const @property
     {
         return _fd != -1;
     }
+
+    ///ditto
     bool waitForData(Duration timeout)
     {
         //FIXME
