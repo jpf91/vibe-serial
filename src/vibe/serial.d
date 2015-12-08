@@ -231,6 +231,22 @@ private:
         return 0;
     }
 
+    /**
+     * Refill internal buffer. After a call to this function, _bufAvailable.length
+     * is greater than zero, or _eof is set to true.
+     */
+    void fillBuffer()
+    {
+        size_t nread;
+        while (nread == 0 && !_eof)
+        {
+            // FIXME: timeout support
+            _readEvent.wait(FileDescriptorEvent.Trigger.read);
+            nread = readInto(_buffer[]);
+        }
+        _bufAvailable = _buffer[0 .. nread];
+    }
+
     this(int fd)
     {
         // FIXME: Write support
@@ -451,27 +467,25 @@ public:
         return _bufAvailable.length != 0;
     }
 
-    //FIXME: Have to read in empty: lastSize may not return 0 if empty returned false before
     ///ditto
     bool empty() @property
     {
-        return _eof && _bufAvailable.length == 0;
+        // If we're not at eof yet, but buffer is empty we need to read to determine whether
+        // there is more data
+        if(_bufAvailable.length == 0 && !_eof)
+            fillBuffer();
+
+        if (_eof)
+            return true;
+        else
+            return false;
     }
 
     ///ditto
     size_t leastSize() @property
     {
-        if (_bufAvailable.length == 0)
-        {
-            size_t nread;
-            while (nread == 0 && !_eof)
-            {
-                // FIXME: timeout support
-                _readEvent.wait(FileDescriptorEvent.Trigger.read);
-                nread = readInto(_buffer[]);
-            }
-            _bufAvailable = _buffer[0 .. nread];
-        }
+        if (this.empty)
+            return 0;
 
         return _bufAvailable.length;
     }
