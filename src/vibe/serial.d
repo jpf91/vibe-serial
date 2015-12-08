@@ -2,6 +2,7 @@
  * 
  */
 module vibe.serial;
+// Qualifier order in this module: final [void foo()] @property const @safe pure nothrow @nogc
 
 import core.sys.posix.unistd, core.sys.posix.fcntl, core.sys.posix.termios, core.stdc.errno;
 import std.exception;
@@ -76,7 +77,7 @@ enum FlowControl
 class ParameterException : Exception
 {
 private:
-    @safe pure nothrow this(ParameterException.Type type, string file =__FILE__, size_t line = __LINE__, Throwable next = null)
+    this(ParameterException.Type type, string file =__FILE__, size_t line = __LINE__, Throwable next = null) @safe pure nothrow 
     {
         parameter = type;
         super("Couldn't set a serial port parameter: " ~ type.stringof, file, line, next);
@@ -117,7 +118,7 @@ private:
     bool _eof = false;
 
     /// Get serial port options
-    termios getOptions() const
+    termios getOptions() const @trusted
     {
         termios options;
         errnoEnforce(tcgetattr(_fd, &options) != -1, "Couldn't get terminal options");
@@ -130,7 +131,7 @@ private:
      * Returns: True if set sucessfully, false if invalid input value
      * Throws: ErrnoException (except for invalid input value)
      */
-    bool setOptions(termios options)
+    bool setOptions(in termios options) @trusted
     {
         auto result = tcsetattr(_fd, TCSADRAIN, &options);
         if (result == -1)
@@ -144,7 +145,7 @@ private:
         assert(0);
     }
 
-    bool setVerifyOptions(termios value)
+    bool setVerifyOptions(in termios value) @safe
     {
         if(setOptions(value))
         {
@@ -155,7 +156,7 @@ private:
             return false;
     }
 
-    void setBaseParams()
+    void setBaseParams() @safe
     {
         auto options = getOptions();
         // Start receiver
@@ -179,7 +180,7 @@ private:
     /**
      * Read into buffer. Return number of bytes read.
      */
-    size_t readInto(ubyte[] buf)
+    size_t readInto(scope ubyte[] buf) @trusted
     {
         assert(buf.length > 0);
 
@@ -210,7 +211,7 @@ private:
     /**
      * Write from buffer. Return bytes written.
      */
-    size_t writeFrom(const(ubyte)[] buf)
+    size_t writeFrom(const(ubyte)[] buf) @trusted
     {
         assert(buf.length > 0);
 
@@ -235,7 +236,7 @@ private:
      * Refill internal buffer. After a call to this function, _bufAvailable.length
      * is greater than zero, or _eof is set to true.
      */
-    void fillBuffer()
+    void fillBuffer() @trusted
     {
         size_t nread;
         while (nread == 0 && !_eof)
@@ -247,7 +248,7 @@ private:
         _bufAvailable = _buffer[0 .. nread];
     }
 
-    this(int fd)
+    this(int fd) @trusted
     {
         // FIXME: Write support
         _fd = fd;
@@ -259,7 +260,7 @@ public:
     /**
      * 
      */
-    BaudRate baudrate() @property const
+    final BaudRate baudrate() @property const @trusted
     {
         auto options = getOptions();
         auto speed = cfgetispeed(&options);
@@ -272,7 +273,7 @@ public:
      * 
      * Throws: ParameterException if the baudrate could not be set
      */
-    void baudrate(BaudRate value) @property
+    final void baudrate(BaudRate value) @property @trusted
     {
         auto options = getOptions();
 
@@ -288,7 +289,7 @@ public:
     /**
      * 
      */
-    Parity parity() @property const
+    final Parity parity() @property const @safe
     {
         auto options = getOptions();
         if (options.c_cflag & PARENB)
@@ -306,7 +307,7 @@ public:
      * 
      * Throws: ParameterException if the parity could not be set
      */
-    void parity(Parity value) @property
+    final void parity(Parity value) @property @safe
     {
         auto options = getOptions();
         
@@ -333,7 +334,7 @@ public:
     /**
      * 
      */
-    StopBits stopBits() @property const
+    final StopBits stopBits() @property const @safe
     {
         auto options = getOptions();
 
@@ -347,7 +348,7 @@ public:
      * 
      * Throws: ParameterException if the number of stop bits could not be set
      */
-    void stopBits(StopBits value) @property
+    final void stopBits(StopBits value) @property @safe
     {
         auto options = getOptions();
         
@@ -369,7 +370,7 @@ public:
     /**
      * 
      */
-    DataBits dataBits() @property const
+    final DataBits dataBits() @property const @safe
     {
         auto options = getOptions();
 
@@ -398,7 +399,7 @@ public:
      * 
      * Throws: ParameterException if the number of data bits could not be set
      */
-    void dataBits(DataBits value) @property
+    final void dataBits(DataBits value) @property @safe
     {
         auto options = getOptions();
         
@@ -427,7 +428,7 @@ public:
     /**
      * TODO: hardware flow control
      */
-    FlowControl flowControl() @property const
+    final FlowControl flowControl() @property const @safe
     {
         auto options = getOptions();
 
@@ -443,7 +444,7 @@ public:
      * 
      * Throws: ParameterException if the flow control type could not be set
      */
-    void flowControl(FlowControl value) @property
+    final void flowControl(FlowControl value) @property @safe
     {
         auto options = getOptions();
 
@@ -584,7 +585,7 @@ public:
  * TODO: Read/Write only modes?
  */
 SerialConnection connectSerial(string file, BaudRate rate, Parity parity = Parity.none,
-    StopBits stopBits = StopBits.one, DataBits dataBits = DataBits.eight, FlowControl flow = FlowControl.none)
+    StopBits stopBits = StopBits.one, DataBits dataBits = DataBits.eight, FlowControl flow = FlowControl.none) @trusted
 {
     import std.string : toStringz;
     enforce(parity == Parity.none, "Using parity bits is not yet supported");
@@ -611,7 +612,7 @@ SerialConnection connectSerial(string file, BaudRate rate, Parity parity = Parit
     return conn;
 }
 
-private speed_t getPosixSpeed(BaudRate rate)
+private speed_t getPosixSpeed(BaudRate rate) @safe pure
 {
     final switch(rate)
     {
@@ -654,7 +655,7 @@ private speed_t getPosixSpeed(BaudRate rate)
     }
 }
 
-private BaudRate getFromPosixSpeed(speed_t rate)
+private BaudRate getFromPosixSpeed(speed_t rate) @safe pure
 {
     switch(rate)
     {
