@@ -74,7 +74,7 @@ enum FlowControl
  * TODO: Should this automatically close the fd
  * on flush, write, read Exceptions?
  */
-class SerialConnection : Stream
+class SerialConnection : ConnectionStream
 {
 private:
     FileDescriptorEvent _readEvent, _writeEvent;
@@ -237,6 +237,15 @@ public:
             core.sys.posix.unistd.close(_fd);
             _fd = -1;
         }
+    }
+    bool connected() const @property
+    {
+        return _fd != -1;
+    }
+    bool waitForData(Duration timeout)
+    {
+        //FIXME
+        return false;
     }
 }
 
