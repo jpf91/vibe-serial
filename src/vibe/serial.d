@@ -4,10 +4,30 @@
 module vibe.serial;
 // Qualifier order in this module: final [void foo()] @property const @safe pure nothrow @nogc
 
-import core.sys.posix.unistd, core.sys.posix.fcntl, core.sys.posix.termios, core.stdc.errno;
+import core.stdc.errno, core.sys.posix.unistd, core.sys.posix.fcntl, core.sys.posix.termios;
 import std.exception;
 import vibe.d;
 
+/**
+ * Support mocking low level posix functions for testing
+ */
+version(MockTest)
+{
+    void delegate() posix_open_del;
+    void posix_open()
+    {
+        return posix_open_del();
+    }
+}
+else
+{
+    private alias posix_open = core.sys.posix.fcntl.open;
+    private alias posix_close = core.sys.posix.unistd.close;
+    private alias posix_read = core.sys.posix.unistd.read;
+    private alias posix_write = core.sys.posix.unistd.write;
+    private alias posix_tcgetattr = core.sys.posix.termios.tcgetattr;
+    private alias posix_tcsetattr = core.sys.posix.termios.tcsetattr;
+}
 
 /**
  * 
@@ -80,7 +100,11 @@ private:
     this(ParameterException.Type type, string file =__FILE__, size_t line = __LINE__, Throwable next = null) @safe pure nothrow 
     {
         parameter = type;
-        super("Couldn't set a serial port parameter: " ~ type.stringof, file, line, next);
+        string paramString;
+        try
+            paramString = to!string(type);
+        catch(Exception){}
+        super("Couldn't set a serial port parameter: " ~ paramString, file, line, next);
     }
 
 public:
@@ -103,6 +127,17 @@ public:
     Type parameter;
 }
 
+// TODO: check whether interrupting works
+
+/**
+ * 
+ */
+class TimeoutException
+{
+
+    size_t bytesProcessed;
+}
+
 /**
  * TODO: Should this automatically close the fd
  * on flush, write, read Exceptions?
@@ -121,7 +156,7 @@ private:
     termios getOptions() const @trusted
     {
         termios options;
-        errnoEnforce(tcgetattr(_fd, &options) != -1, "Couldn't get terminal options");
+        errnoEnforce(posix_tcgetattr(_fd, &options) != -1, "Couldn't get terminal options");
         return options;
     }
     
@@ -133,13 +168,16 @@ private:
      */
     bool setOptions(in termios options) @trusted
     {
-        auto result = tcsetattr(_fd, TCSADRAIN, &options);
+        auto result = posix_tcsetattr(_fd, TCSADRAIN, &options);
         if (result == -1)
-            return true;
-        else if (errno == EINVAL)
-            return false;
+        {
+            if (errno == EINVAL)
+                return false;
+            else
+                errnoEnforce(false, "Couldn't set terminal options");
+        }
         else
-            errnoEnforce(false, "Couldn't set terminal options");
+            return true;
 
         // Can't happen
         assert(0);
@@ -184,7 +222,7 @@ private:
     {
         assert(buf.length > 0);
 
-        auto res = core.sys.posix.unistd.read(_fd, buf.ptr, buf.length);
+        auto res = posix_read(_fd, buf.ptr, buf.length);
 
         if (res == -1)
         {
@@ -215,7 +253,7 @@ private:
     {
         assert(buf.length > 0);
 
-        auto res = core.sys.posix.unistd.write(_fd, buf.ptr, buf.length);
+        auto res = posix_write(_fd, buf.ptr, buf.length);
         
         if (res == -1)
         {
@@ -253,7 +291,7 @@ private:
         // FIXME: Write support
         _fd = fd;
         _readEvent = createFileDescriptorEvent(_fd, FileDescriptorEvent.Trigger.read);
-        _writeEvent = createFileDescriptorEvent(_fd, FileDescriptorEvent.Trigger.write);
+        //_writeEvent = createFileDescriptorEvent(_fd, FileDescriptorEvent.Trigger.write);
     }
 
 public:
@@ -383,13 +421,13 @@ public:
         enforce(masked == 0, "Unsupported number of DataBits!");
 
         // Now check all known values
-        if (options.c_cflag & CS5)
+        if ((options.c_cflag & CSIZE) == CS5)
             return DataBits.five;
-        else if (options.c_cflag & CS6)
+        else if ((options.c_cflag & CSIZE) == CS6)
             return DataBits.six;
-        else if (options.c_cflag & CS7)
+        else if ((options.c_cflag & CSIZE) == CS7)
             return DataBits.seven;
-        else if (options.c_cflag & CS8)
+        else if ((options.c_cflag & CSIZE) == CS8)
             return DataBits.eight;
         else
             throw new Exception("Unsupported number of DataBits!");
@@ -483,7 +521,7 @@ public:
     }
 
     ///ditto
-    size_t leastSize() @property
+    ulong leastSize() @property
     {
         if (this.empty)
             return 0;
@@ -538,7 +576,7 @@ public:
     }
 
     ///ditto
-    void write(InputStream stream, size_t nbytes = 0)
+    void write(InputStream stream, ulong nbytes = 0)
     {
         writeDefault(stream, nbytes);
     }
@@ -562,7 +600,7 @@ public:
         if (_fd != -1)
         {
             // Can't really handle errors here anyway (FD is in undefined state after error)
-            core.sys.posix.unistd.close(_fd);
+            posix_close(_fd);
             _fd = -1;
         }
     }
@@ -576,8 +614,10 @@ public:
     ///ditto
     bool waitForData(Duration timeout)
     {
-        //FIXME
-        return false;
+        if (_buffer.length != 0)
+            return true;
+        else
+            return _readEvent.wait(timeout, FileDescriptorEvent.Trigger.read);
     }
 }
 
@@ -592,13 +632,13 @@ SerialConnection connectSerial(string file, BaudRate rate, Parity parity = Parit
     enforce(flow != FlowControl.hardware, "Hardware flow control is not yet supported");
 
     // Open file descriptor
-    auto fd = open(file.toStringz(), O_RDWR | O_NOCTTY | O_NONBLOCK);
+    auto fd = posix_open(file.toStringz(), O_RDWR | O_NOCTTY | O_NONBLOCK);
     errnoEnforce(fd != -1, "Couldn't open serial port");
 
     scope(failure)
     {
         // Can't really handle errors here anyway (FD is in undefined state after error)
-        close(fd);
+        posix_close(fd);
     }
 
     auto conn = new SerialConnection(fd);
