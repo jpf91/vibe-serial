@@ -164,13 +164,13 @@ private:
         options.c_cflag &= ~(HUPCL);
         
         // Raw input
-        options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG | ECHOK | ECHONL | IEXTEN);
+        options.c_lflag &= ~(ICANON | ECHO | ECHOE | ISIG | ECHOK | ECHONL | IEXTEN | TOSTOP);
         
         // No postprocessing
-        options.c_oflag &= ~OPOST;
+        options.c_oflag &= ~(OPOST | /*OLCUC |*/ ONLCR | OCRNL | ONOCR | ONLRET | OFILL);
         
         // Ignore break condition
-        options.c_iflag &= ~(IXON | IXOFF | IXANY | BRKINT);
+        options.c_iflag &= ~(IXON | IXOFF | IXANY | BRKINT | ICRNL | INLCR | ISTRIP | IGNCR /*| IUCLC*/);
         options.c_iflag |= IGNBRK;
 
         if(!setVerifyOptions(options))
